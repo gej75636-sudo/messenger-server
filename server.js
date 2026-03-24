@@ -90,15 +90,17 @@ server.on('connection', (ws) => {
                 }));
             }
             
-            // 3. СОЗДАНИЕ/ОТКРЫТИЕ ЧАТА (поддерживаем оба типа)
-            else if (msg.type === 'start_chat' || msg.type === 'open_chat') {
+            // 3. НАЧАТЬ ЛИЧНЫЙ ЧАТ
+            else if (msg.type === 'start_chat') {
                 const targetUserId = msg.targetUserId;
                 const chatId = getChatId(currentUserId, targetUserId);
                 
+                // Создаём чат если его нет
                 if (!privateMessages[chatId]) {
                     privateMessages[chatId] = [];
                 }
                 
+                // Добавляем в список чатов пользователя
                 if (!userChats[currentUserId].includes(chatId)) {
                     userChats[currentUserId].push(chatId);
                 }
@@ -110,27 +112,17 @@ server.on('connection', (ws) => {
                 ws.send(JSON.stringify({
                     type: 'chat_history',
                     chatId: chatId,
-                    messages: privateMessages[chatId],
+                    messages: privateMessages[chatId] || [],
                     partner: {
                         id: targetUserId,
                         name: users[targetUserId]?.username || 'Пользователь'
                     }
                 }));
                 
-                // Если собеседник онлайн, уведомляем его о новом чате
-                if (users[targetUserId] && users[targetUserId].online) {
-                    sendToUser(targetUserId, JSON.stringify({
-                        type: 'new_chat',
-                        chatId: chatId,
-                        partner: {
-                            id: currentUserId,
-                            name: currentUsername
-                        }
-                    }));
-                }
+                console.log(`📁 Чат ${chatId} открыт для ${currentUsername} с ${users[targetUserId]?.username}`);
             }
             
-            // 4. ЗАПРОС ИСТОРИИ ЧАТА
+            // 4. ЗАПРОС ИСТОРИИ ЧАТА (если нужно)
             else if (msg.type === 'get_chat_history') {
                 const chatId = msg.chatId;
                 const [id1, id2] = chatId.split('_');
@@ -148,30 +140,7 @@ server.on('connection', (ws) => {
                 }));
             }
             
-            // 5. ЗАПРОС СПИСКА ЧАТОВ
-            else if (msg.type === 'get_chats') {
-                const chats = (userChats[currentUserId] || []).map(chatId => {
-                    const [id1, id2] = chatId.split('_');
-                    const partnerId = id1 === currentUserId ? id2 : id1;
-                    const partner = users[partnerId];
-                    const lastMsg = privateMessages[chatId]?.slice(-1)[0];
-                    return {
-                        chatId: chatId,
-                        partnerId: partnerId,
-                        partnerName: partner?.username || 'Пользователь',
-                        lastMessage: lastMsg?.text || 'Нет сообщений',
-                        lastTime: lastMsg?.timestamp || '',
-                        unread: 0
-                    };
-                });
-                
-                ws.send(JSON.stringify({
-                    type: 'chats_list',
-                    chats: chats
-                }));
-            }
-            
-            // 6. ОТПРАВКА ЛИЧНОГО СООБЩЕНИЯ
+            // 5. ОТПРАВКА ЛИЧНОГО СООБЩЕНИЯ
             else if (msg.type === 'private_message') {
                 const chatId = msg.chatId;
                 const targetUserId = msg.targetUserId;
@@ -204,6 +173,8 @@ server.on('connection', (ws) => {
                     message: newMsg,
                     chatId: chatId
                 }));
+                
+                console.log(`💬 ${currentUsername} -> ${users[targetUserId]?.username}: ${msg.text}`);
             }
             
         } catch (err) {
