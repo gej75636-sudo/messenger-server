@@ -4,24 +4,12 @@ const PORT = process.env.PORT || 8080;
 const server = new WebSocket.Server({ port: PORT });
 
 let users = {};
-let privateMessages = {};
-let userChats = {};
+let messages = []; // общий чат для всех
 
 let nextId = 1;
 
 function generateUserId() {
     return (nextId++).toString();
-}
-
-function getChatId(user1, user2) {
-    return [user1, user2].sort().join('_');
-}
-
-function sendToUser(userId, data) {
-    const user = users[userId];
-    if (user && user.ws && user.ws.readyState === WebSocket.OPEN) {
-        user.ws.send(JSON.stringify(data));
-    }
 }
 
 function broadcastUsersList() {
@@ -43,6 +31,19 @@ function broadcastUsersList() {
     });
 }
 
+function broadcastMessage(msg) {
+    const data = JSON.stringify({
+        type: 'new_message',
+        message: msg
+    });
+    
+    Object.values(users).forEach(user => {
+        if (user.ws && user.ws.readyState === WebSocket.OPEN) {
+            user.ws.send(data);
+        }
+    });
+}
+
 server.on('connection', (ws) => {
     let currentUserId = null;
     let currentUsername = null;
@@ -52,6 +53,7 @@ server.on('connection', (ws) => {
             const msg = JSON.parse(data);
             console.log('Получено:', msg.type);
             
+            // 1. РЕГИСТРАЦИЯ
             if (msg.type === 'register') {
                 currentUsername = msg.username;
                 currentUserId = generateUserId();
@@ -62,7 +64,6 @@ server.on('connection', (ws) => {
                     ws: ws,
                     online: true
                 };
-                userChats[currentUserId] = [];
                 
                 console.log(`✅ ${currentUsername} (${currentUserId}) подключился`);
                 
@@ -72,8 +73,16 @@ server.on('connection', (ws) => {
                     username: currentUsername
                 }));
                 
+                // Отправляем историю сообщений
+                ws.send(JSON.stringify({
+                    type: 'history',
+                    messages: messages
+                }));
+                
                 broadcastUsersList();
             }
+            
+            // 2. ЗАПРОС СПИСКА ПОЛЬЗОВАТЕЛЕЙ
             else if (msg.type === 'get_users') {
                 const userList = Object.keys(users).map(id => ({
                     id: id,
@@ -85,100 +94,20 @@ server.on('connection', (ws) => {
                     users: userList
                 }));
             }
-            else if (msg.type === 'start_chat') {
-                const targetUserId = msg.targetUserId;
-                const chatId = getChatId(currentUserId, targetUserId);
-                
-                if (!privateMessages[chatId]) privateMessages[chatId] = [];
-                if (!userChats[currentUserId].includes(chatId)) userChats[currentUserId].push(chatId);
-                if (userChats[targetUserId] && !userChats[targetUserId].includes(chatId)) userChats[targetUserId].push(chatId);
-                
-                ws.send(JSON.stringify({
-                    type: 'chat_history',
-                    chatId: chatId,
-                    messages: privateMessages[chatId],
-                    partner: {
-                        id: targetUserId,
-                        name: users[targetUserId]?.username || 'Пользователь'
-                    }
-                }));
-                
-                if (users[targetUserId] && users[targetUserId].online) {
-                    sendToUser(targetUserId, JSON.stringify({
-                        type: 'new_chat',
-                        chatId: chatId,
-                        partner: {
-                            id: currentUserId,
-                            name: currentUsername
-                        }
-                    }));
-                }
-            }
-            else if (msg.type === 'get_chat_history') {
-                const chatId = msg.chatId;
-                const [id1, id2] = chatId.split('_');
-                const partnerId = id1 === currentUserId ? id2 : id1;
-                const partner = users[partnerId];
-                
-                ws.send(JSON.stringify({
-                    type: 'chat_history',
-                    chatId: chatId,
-                    messages: privateMessages[chatId] || [],
-                    partner: {
-                        id: partnerId,
-                        name: partner?.username || 'Пользователь'
-                    }
-                }));
-            }
-            else if (msg.type === 'get_chats') {
-                const chats = (userChats[currentUserId] || []).map(chatId => {
-                    const [id1, id2] = chatId.split('_');
-                    const partnerId = id1 === currentUserId ? id2 : id1;
-                    const partner = users[partnerId];
-                    const lastMsg = privateMessages[chatId]?.slice(-1)[0];
-                    return {
-                        chatId: chatId,
-                        partnerId: partnerId,
-                        partnerName: partner?.username || 'Пользователь',
-                        lastMessage: lastMsg?.text || 'Нет сообщений',
-                        lastTime: lastMsg?.timestamp || '',
-                        unread: 0
-                    };
-                });
-                
-                ws.send(JSON.stringify({
-                    type: 'chats_list',
-                    chats: chats
-                }));
-            }
-            else if (msg.type === 'private_message') {
-                const chatId = msg.chatId;
-                const targetUserId = msg.targetUserId;
-                
+            
+            // 3. ОТПРАВКА СООБЩЕНИЯ
+            else if (msg.type === 'message') {
                 const newMsg = {
                     id: Date.now(),
                     text: msg.text,
                     senderId: currentUserId,
                     senderName: currentUsername,
-                    timestamp: new Date().toLocaleTimeString(),
-                    chatId: chatId
+                    timestamp: new Date().toLocaleTimeString()
                 };
+                messages.push(newMsg);
+                if (messages.length > 200) messages.shift();
                 
-                if (!privateMessages[chatId]) privateMessages[chatId] = [];
-                privateMessages[chatId].push(newMsg);
-                if (privateMessages[chatId].length > 200) privateMessages[chatId].shift();
-                
-                ws.send(JSON.stringify({
-                    type: 'new_private_message',
-                    message: newMsg,
-                    chatId: chatId
-                }));
-                
-                sendToUser(targetUserId, JSON.stringify({
-                    type: 'new_private_message',
-                    message: newMsg,
-                    chatId: chatId
-                }));
+                broadcastMessage(newMsg);
             }
             
         } catch (err) {
@@ -198,4 +127,4 @@ server.on('connection', (ws) => {
 });
 
 console.log('✅ Сервер запущен на порту ' + PORT);
-console.log('💬 Личные чаты активны');
+console.log('💬 Общий чат для всех пользователей');
