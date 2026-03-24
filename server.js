@@ -42,6 +42,31 @@ function broadcastUsersList() {
     });
 }
 
+// Отправка обновления профиля всем, у кого есть чат с этим пользователем
+function broadcastProfileUpdate(userId) {
+    const user = users[userId];
+    if (!user) return;
+    
+    const updateData = JSON.stringify({
+        type: 'profile_updated',
+        userId: userId,
+        username: user.username,
+        avatar: user.avatar,
+        avatarInitials: user.avatarInitials,
+        avatarColor: user.avatarColor
+    });
+    
+    // Отправляем всем, у кого есть чат с этим пользователем
+    Object.values(users).forEach(otherUser => {
+        if (otherUser.id !== userId) {
+            const chatId = getChatId(userId, otherUser.id);
+            if (privateMessages[chatId] && privateMessages[chatId].length > 0) {
+                sendToUser(otherUser.id, JSON.parse(updateData));
+            }
+        }
+    });
+}
+
 server.on('connection', (ws) => {
     let currentUserId = null;
     let currentUsername = null;
@@ -56,7 +81,6 @@ server.on('connection', (ws) => {
             const msg = JSON.parse(data);
             console.log('Получено:', msg.type);
             
-            // РЕГИСТРАЦИЯ
             if (msg.type === 'register') {
                 currentUsername = msg.username;
                 currentAvatar = msg.avatar || null;
@@ -87,32 +111,46 @@ server.on('connection', (ws) => {
                 
                 broadcastUsersList();
             }
-            
-            // ОБНОВЛЕНИЕ ПРОФИЛЯ
             else if (msg.type === 'update_profile') {
                 if (users[currentUserId]) {
-                    if (msg.username) {
+                    let updated = false;
+                    if (msg.username && msg.username !== currentUsername) {
                         users[currentUserId].username = msg.username;
                         currentUsername = msg.username;
+                        updated = true;
                     }
-                    if (msg.avatar !== undefined) {
+                    if (msg.avatar !== undefined && msg.avatar !== currentAvatar) {
                         users[currentUserId].avatar = msg.avatar;
                         currentAvatar = msg.avatar;
+                        updated = true;
                     }
-                    if (msg.avatarInitials) {
+                    if (msg.avatarInitials && msg.avatarInitials !== currentAvatarInitials) {
                         users[currentUserId].avatarInitials = msg.avatarInitials;
                         currentAvatarInitials = msg.avatarInitials;
+                        updated = true;
                     }
-                    if (msg.avatarColor) {
+                    if (msg.avatarColor && msg.avatarColor !== currentAvatarColor) {
                         users[currentUserId].avatarColor = msg.avatarColor;
                         currentAvatarColor = msg.avatarColor;
+                        updated = true;
                     }
-                    console.log(`📝 ${currentUsername} обновил профиль`);
-                    broadcastUsersList();
+                    
+                    if (updated) {
+                        console.log(`📝 ${currentUsername} обновил профиль`);
+                        broadcastUsersList();
+                        broadcastProfileUpdate(currentUserId);
+                        
+                        // Подтверждаем обновление
+                        ws.send(JSON.stringify({
+                            type: 'profile_updated_confirm',
+                            username: currentUsername,
+                            avatar: currentAvatar,
+                            avatarInitials: currentAvatarInitials,
+                            avatarColor: currentAvatarColor
+                        }));
+                    }
                 }
             }
-            
-            // ЗАПРОС СПИСКА ПОЛЬЗОВАТЕЛЕЙ
             else if (msg.type === 'get_users') {
                 const userList = Object.keys(users).map(id => ({
                     id: id,
@@ -124,8 +162,6 @@ server.on('connection', (ws) => {
                 }));
                 ws.send(JSON.stringify({ type: 'users_list', users: userList }));
             }
-            
-            // ЗАПРОС ИСТОРИИ ЧАТА
             else if (msg.type === 'get_chat_history') {
                 const chatId = msg.chatId;
                 const partner = users[msg.partnerId];
@@ -142,16 +178,11 @@ server.on('connection', (ws) => {
                     }
                 }));
             }
-            
-            // ОТПРАВКА СООБЩЕНИЯ
             else if (msg.type === 'private_message') {
                 const targetUserId = msg.targetUserId;
                 const chatId = getChatId(currentUserId, targetUserId);
                 
-                // Создаём чат если его нет
-                if (!privateMessages[chatId]) {
-                    privateMessages[chatId] = [];
-                }
+                if (!privateMessages[chatId]) privateMessages[chatId] = [];
                 
                 const newMsg = {
                     id: Date.now(),
@@ -170,14 +201,12 @@ server.on('connection', (ws) => {
                 
                 console.log(`💬 ${currentUsername} -> ${users[targetUserId]?.username}: ${msg.text}`);
                 
-                // Отправляем отправителю
                 ws.send(JSON.stringify({
                     type: 'new_private_message',
                     message: newMsg,
                     chatId: chatId
                 }));
                 
-                // Отправляем получателю
                 const targetUser = users[targetUserId];
                 if (targetUser && targetUser.ws && targetUser.ws.readyState === WebSocket.OPEN) {
                     targetUser.ws.send(JSON.stringify({
@@ -209,4 +238,4 @@ server.on('connection', (ws) => {
 
 console.log('✅ Сервер запущен на порту ' + PORT);
 console.log('🌐 Адрес: wss://messenger-server-production-a67c.up.railway.app');
-console.log('💬 Личные чаты активны');
+console.log('💬 Личные чаты активны, профили обновляются в реальном времени');
