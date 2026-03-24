@@ -29,6 +29,9 @@ function broadcastUsersList() {
     const userList = Object.keys(users).map(id => ({
         id: id,
         username: users[id].username,
+        avatar: users[id].avatar || null,
+        avatarInitials: users[id].avatarInitials || users[id].username.charAt(0).toUpperCase(),
+        avatarColor: users[id].avatarColor || '#6c5ce7',
         online: users[id].online
     }));
     
@@ -47,6 +50,9 @@ function broadcastUsersList() {
 server.on('connection', (ws) => {
     let currentUserId = null;
     let currentUsername = null;
+    let currentAvatar = null;
+    let currentAvatarInitials = null;
+    let currentAvatarColor = null;
     
     ws.on('message', (data) => {
         try {
@@ -56,11 +62,17 @@ server.on('connection', (ws) => {
             // 1. РЕГИСТРАЦИЯ
             if (msg.type === 'register') {
                 currentUsername = msg.username;
+                currentAvatar = msg.avatar || null;
+                currentAvatarInitials = msg.avatarInitials || msg.username.charAt(0).toUpperCase();
+                currentAvatarColor = msg.avatarColor || '#6c5ce7';
                 currentUserId = generateUserId();
                 
                 users[currentUserId] = {
                     id: currentUserId,
                     username: currentUsername,
+                    avatar: currentAvatar,
+                    avatarInitials: currentAvatarInitials,
+                    avatarColor: currentAvatarColor,
                     ws: ws,
                     online: true
                 };
@@ -71,10 +83,24 @@ server.on('connection', (ws) => {
                 ws.send(JSON.stringify({
                     type: 'registered',
                     userId: currentUserId,
-                    username: currentUsername
+                    username: currentUsername,
+                    avatar: currentAvatar,
+                    avatarInitials: currentAvatarInitials,
+                    avatarColor: currentAvatarColor
                 }));
                 
                 broadcastUsersList();
+            }
+            
+            // 1.5 ОБНОВЛЕНИЕ АВАТАРКИ
+            else if (msg.type === 'update_avatar') {
+                if (users[currentUserId]) {
+                    users[currentUserId].avatar = msg.avatar;
+                    users[currentUserId].avatarInitials = msg.avatarInitials;
+                    users[currentUserId].avatarColor = msg.avatarColor;
+                    broadcastUsersList();
+                    console.log(`🖼️ ${currentUsername} обновил аватарку`);
+                }
             }
             
             // 2. ЗАПРОС СПИСКА ПОЛЬЗОВАТЕЛЕЙ
@@ -82,6 +108,9 @@ server.on('connection', (ws) => {
                 const userList = Object.keys(users).map(id => ({
                     id: id,
                     username: users[id].username,
+                    avatar: users[id].avatar || null,
+                    avatarInitials: users[id].avatarInitials || users[id].username.charAt(0).toUpperCase(),
+                    avatarColor: users[id].avatarColor || '#6c5ce7',
                     online: users[id].online
                 }));
                 ws.send(JSON.stringify({
@@ -95,12 +124,10 @@ server.on('connection', (ws) => {
                 const targetUserId = msg.targetUserId;
                 const chatId = getChatId(currentUserId, targetUserId);
                 
-                // Создаём чат если его нет
                 if (!privateMessages[chatId]) {
                     privateMessages[chatId] = [];
                 }
                 
-                // Добавляем в список чатов пользователя
                 if (!userChats[currentUserId].includes(chatId)) {
                     userChats[currentUserId].push(chatId);
                 }
@@ -108,21 +135,24 @@ server.on('connection', (ws) => {
                     userChats[targetUserId].push(chatId);
                 }
                 
-                // Отправляем историю чата
+                const partner = users[targetUserId];
                 ws.send(JSON.stringify({
                     type: 'chat_history',
                     chatId: chatId,
                     messages: privateMessages[chatId] || [],
                     partner: {
                         id: targetUserId,
-                        name: users[targetUserId]?.username || 'Пользователь'
+                        name: partner?.username || 'Пользователь',
+                        avatar: partner?.avatar || null,
+                        avatarInitials: partner?.avatarInitials || (partner?.username?.charAt(0).toUpperCase() || '?'),
+                        avatarColor: partner?.avatarColor || '#6c5ce7'
                     }
                 }));
                 
-                console.log(`📁 Чат ${chatId} открыт для ${currentUsername} с ${users[targetUserId]?.username}`);
+                console.log(`📁 Чат ${chatId} открыт для ${currentUsername} с ${partner?.username}`);
             }
             
-            // 4. ЗАПРОС ИСТОРИИ ЧАТА (если нужно)
+            // 4. ЗАПРОС ИСТОРИИ ЧАТА
             else if (msg.type === 'get_chat_history') {
                 const chatId = msg.chatId;
                 const [id1, id2] = chatId.split('_');
@@ -135,7 +165,10 @@ server.on('connection', (ws) => {
                     messages: privateMessages[chatId] || [],
                     partner: {
                         id: partnerId,
-                        name: partner?.username || 'Пользователь'
+                        name: partner?.username || 'Пользователь',
+                        avatar: partner?.avatar || null,
+                        avatarInitials: partner?.avatarInitials || (partner?.username?.charAt(0).toUpperCase() || '?'),
+                        avatarColor: partner?.avatarColor || '#6c5ce7'
                     }
                 }));
             }
@@ -150,6 +183,9 @@ server.on('connection', (ws) => {
                     text: msg.text,
                     senderId: currentUserId,
                     senderName: currentUsername,
+                    senderAvatar: currentAvatar,
+                    senderAvatarInitials: currentAvatarInitials,
+                    senderAvatarColor: currentAvatarColor,
                     timestamp: new Date().toLocaleTimeString(),
                     chatId: chatId
                 };
@@ -194,4 +230,4 @@ server.on('connection', (ws) => {
 });
 
 console.log('✅ Сервер запущен на порту ' + PORT);
-console.log('💬 Личные чаты активны');
+console.log('💬 Личные чаты активны с поддержкой аватарок');
