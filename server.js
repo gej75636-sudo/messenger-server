@@ -49,12 +49,13 @@ server.on('connection', (ws) => {
     let currentAvatarInitials = null;
     let currentAvatarColor = null;
     
+    console.log('🔌 Новое подключение');
+    
     ws.on('message', (data) => {
         try {
             const msg = JSON.parse(data);
             console.log('Получено:', msg.type);
             
-            // РЕГИСТРАЦИЯ
             if (msg.type === 'register') {
                 currentUsername = msg.username;
                 currentAvatar = msg.avatar || null;
@@ -85,8 +86,6 @@ server.on('connection', (ws) => {
                 
                 broadcastUsersList();
             }
-            
-            // ОБНОВЛЕНИЕ ПРОФИЛЯ
             else if (msg.type === 'update_profile') {
                 if (users[currentUserId]) {
                     if (msg.username) {
@@ -109,8 +108,6 @@ server.on('connection', (ws) => {
                     broadcastUsersList();
                 }
             }
-            
-            // ЗАПРОС СПИСКА ПОЛЬЗОВАТЕЛЕЙ
             else if (msg.type === 'get_users') {
                 const userList = Object.keys(users).map(id => ({
                     id: id,
@@ -122,8 +119,6 @@ server.on('connection', (ws) => {
                 }));
                 ws.send(JSON.stringify({ type: 'users_list', users: userList }));
             }
-            
-            // ЗАПРОС ИСТОРИИ ЧАТА
             else if (msg.type === 'get_chat_history') {
                 const chatId = msg.chatId;
                 const partner = users[msg.partnerId];
@@ -140,16 +135,11 @@ server.on('connection', (ws) => {
                     }
                 }));
             }
-            
-            // ОТПРАВКА СООБЩЕНИЯ (создаёт чат если его нет)
             else if (msg.type === 'private_message') {
                 const targetUserId = msg.targetUserId;
                 const chatId = getChatId(currentUserId, targetUserId);
                 
-                // Создаём чат если его нет
-                if (!privateMessages[chatId]) {
-                    privateMessages[chatId] = [];
-                }
+                if (!privateMessages[chatId]) privateMessages[chatId] = [];
                 
                 const newMsg = {
                     id: Date.now(),
@@ -166,14 +156,12 @@ server.on('connection', (ws) => {
                 privateMessages[chatId].push(newMsg);
                 if (privateMessages[chatId].length > 200) privateMessages[chatId].shift();
                 
-                // Отправляем отправителю
                 ws.send(JSON.stringify({
                     type: 'new_private_message',
                     message: newMsg,
                     chatId: chatId
                 }));
                 
-                // Отправляем получателю
                 sendToUser(targetUserId, JSON.stringify({
                     type: 'new_private_message',
                     message: newMsg,
@@ -200,4 +188,5 @@ server.on('connection', (ws) => {
 });
 
 console.log('✅ Сервер запущен на порту ' + PORT);
-console.log('💬 Личные чаты создаются при первом сообщении');
+console.log('🌐 Адрес: wss://messenger-server-production-a67c.up.railway.app');
+console.log('💬 Личные чаты активны');
