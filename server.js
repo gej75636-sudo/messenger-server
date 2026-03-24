@@ -3,10 +3,8 @@ const WebSocket = require('ws');
 const PORT = process.env.PORT || 8080;
 const server = new WebSocket.Server({ port: PORT });
 
-// Хранилище
 let users = {};
 let privateMessages = {};
-let userChats = {};
 
 let nextId = 1;
 
@@ -35,10 +33,7 @@ function broadcastUsersList() {
         online: users[id].online
     }));
     
-    const data = JSON.stringify({
-        type: 'users_list',
-        users: userList
-    });
+    const data = JSON.stringify({ type: 'users_list', users: userList });
     
     Object.values(users).forEach(user => {
         if (user.ws && user.ws.readyState === WebSocket.OPEN) {
@@ -59,7 +54,7 @@ server.on('connection', (ws) => {
             const msg = JSON.parse(data);
             console.log('Получено:', msg.type);
             
-            // 1. РЕГИСТРАЦИЯ
+            // РЕГИСТРАЦИЯ
             if (msg.type === 'register') {
                 currentUsername = msg.username;
                 currentAvatar = msg.avatar || null;
@@ -76,7 +71,6 @@ server.on('connection', (ws) => {
                     ws: ws,
                     online: true
                 };
-                userChats[currentUserId] = [];
                 
                 console.log(`✅ ${currentUsername} (${currentUserId}) подключился`);
                 
@@ -92,18 +86,31 @@ server.on('connection', (ws) => {
                 broadcastUsersList();
             }
             
-            // 1.5 ОБНОВЛЕНИЕ АВАТАРКИ
-            else if (msg.type === 'update_avatar') {
+            // ОБНОВЛЕНИЕ ПРОФИЛЯ
+            else if (msg.type === 'update_profile') {
                 if (users[currentUserId]) {
-                    users[currentUserId].avatar = msg.avatar;
-                    users[currentUserId].avatarInitials = msg.avatarInitials;
-                    users[currentUserId].avatarColor = msg.avatarColor;
+                    if (msg.username) {
+                        users[currentUserId].username = msg.username;
+                        currentUsername = msg.username;
+                    }
+                    if (msg.avatar !== undefined) {
+                        users[currentUserId].avatar = msg.avatar;
+                        currentAvatar = msg.avatar;
+                    }
+                    if (msg.avatarInitials) {
+                        users[currentUserId].avatarInitials = msg.avatarInitials;
+                        currentAvatarInitials = msg.avatarInitials;
+                    }
+                    if (msg.avatarColor) {
+                        users[currentUserId].avatarColor = msg.avatarColor;
+                        currentAvatarColor = msg.avatarColor;
+                    }
+                    console.log(`📝 ${currentUsername} обновил профиль`);
                     broadcastUsersList();
-                    console.log(`🖼️ ${currentUsername} обновил аватарку`);
                 }
             }
             
-            // 2. ЗАПРОС СПИСКА ПОЛЬЗОВАТЕЛЕЙ
+            // ЗАПРОС СПИСКА ПОЛЬЗОВАТЕЛЕЙ
             else if (msg.type === 'get_users') {
                 const userList = Object.keys(users).map(id => ({
                     id: id,
@@ -113,70 +120,36 @@ server.on('connection', (ws) => {
                     avatarColor: users[id].avatarColor || '#6c5ce7',
                     online: users[id].online
                 }));
+                ws.send(JSON.stringify({ type: 'users_list', users: userList }));
+            }
+            
+            // ЗАПРОС ИСТОРИИ ЧАТА
+            else if (msg.type === 'get_chat_history') {
+                const chatId = msg.chatId;
+                const partner = users[msg.partnerId];
                 ws.send(JSON.stringify({
-                    type: 'users_list',
-                    users: userList
+                    type: 'chat_history',
+                    chatId: chatId,
+                    messages: privateMessages[chatId] || [],
+                    partner: {
+                        id: msg.partnerId,
+                        name: partner?.username || 'Пользователь',
+                        avatar: partner?.avatar || null,
+                        avatarInitials: partner?.avatarInitials || (partner?.username?.charAt(0).toUpperCase() || '?'),
+                        avatarColor: partner?.avatarColor || '#6c5ce7'
+                    }
                 }));
             }
             
-            // 3. НАЧАТЬ ЛИЧНЫЙ ЧАТ
-            else if (msg.type === 'start_chat') {
+            // ОТПРАВКА СООБЩЕНИЯ (создаёт чат если его нет)
+            else if (msg.type === 'private_message') {
                 const targetUserId = msg.targetUserId;
                 const chatId = getChatId(currentUserId, targetUserId);
                 
+                // Создаём чат если его нет
                 if (!privateMessages[chatId]) {
                     privateMessages[chatId] = [];
                 }
-                
-                if (!userChats[currentUserId].includes(chatId)) {
-                    userChats[currentUserId].push(chatId);
-                }
-                if (userChats[targetUserId] && !userChats[targetUserId].includes(chatId)) {
-                    userChats[targetUserId].push(chatId);
-                }
-                
-                const partner = users[targetUserId];
-                ws.send(JSON.stringify({
-                    type: 'chat_history',
-                    chatId: chatId,
-                    messages: privateMessages[chatId] || [],
-                    partner: {
-                        id: targetUserId,
-                        name: partner?.username || 'Пользователь',
-                        avatar: partner?.avatar || null,
-                        avatarInitials: partner?.avatarInitials || (partner?.username?.charAt(0).toUpperCase() || '?'),
-                        avatarColor: partner?.avatarColor || '#6c5ce7'
-                    }
-                }));
-                
-                console.log(`📁 Чат ${chatId} открыт для ${currentUsername} с ${partner?.username}`);
-            }
-            
-            // 4. ЗАПРОС ИСТОРИИ ЧАТА
-            else if (msg.type === 'get_chat_history') {
-                const chatId = msg.chatId;
-                const [id1, id2] = chatId.split('_');
-                const partnerId = id1 === currentUserId ? id2 : id1;
-                const partner = users[partnerId];
-                
-                ws.send(JSON.stringify({
-                    type: 'chat_history',
-                    chatId: chatId,
-                    messages: privateMessages[chatId] || [],
-                    partner: {
-                        id: partnerId,
-                        name: partner?.username || 'Пользователь',
-                        avatar: partner?.avatar || null,
-                        avatarInitials: partner?.avatarInitials || (partner?.username?.charAt(0).toUpperCase() || '?'),
-                        avatarColor: partner?.avatarColor || '#6c5ce7'
-                    }
-                }));
-            }
-            
-            // 5. ОТПРАВКА ЛИЧНОГО СООБЩЕНИЯ
-            else if (msg.type === 'private_message') {
-                const chatId = msg.chatId;
-                const targetUserId = msg.targetUserId;
                 
                 const newMsg = {
                     id: Date.now(),
@@ -190,9 +163,6 @@ server.on('connection', (ws) => {
                     chatId: chatId
                 };
                 
-                if (!privateMessages[chatId]) {
-                    privateMessages[chatId] = [];
-                }
                 privateMessages[chatId].push(newMsg);
                 if (privateMessages[chatId].length > 200) privateMessages[chatId].shift();
                 
@@ -230,4 +200,4 @@ server.on('connection', (ws) => {
 });
 
 console.log('✅ Сервер запущен на порту ' + PORT);
-console.log('💬 Личные чаты активны с поддержкой аватарок');
+console.log('💬 Личные чаты создаются при первом сообщении');
