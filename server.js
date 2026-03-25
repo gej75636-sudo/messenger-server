@@ -42,7 +42,12 @@ function broadcastUsersList() {
     });
 }
 
-// Отправка обновления профиля всем, у кого есть чат с этим пользователем
+function isUsernameTaken(username, excludeUserId = null) {
+    return Object.values(users).some(user => 
+        user.username === username && user.id !== excludeUserId
+    );
+}
+
 function broadcastProfileUpdate(userId) {
     const user = users[userId];
     if (!user) return;
@@ -56,7 +61,6 @@ function broadcastProfileUpdate(userId) {
         avatarColor: user.avatarColor
     });
     
-    // Отправляем всем, у кого есть чат с этим пользователем
     Object.values(users).forEach(otherUser => {
         if (otherUser.id !== userId) {
             const chatId = getChatId(userId, otherUser.id);
@@ -82,6 +86,16 @@ server.on('connection', (ws) => {
             console.log('Получено:', msg.type);
             
             if (msg.type === 'register') {
+                // Проверяем уникальность username
+                if (isUsernameTaken(msg.username)) {
+                    ws.send(JSON.stringify({
+                        type: 'register_error',
+                        error: 'username_taken',
+                        message: 'Этот username уже занят'
+                    }));
+                    return;
+                }
+                
                 currentUsername = msg.username;
                 currentAvatar = msg.avatar || null;
                 currentAvatarInitials = msg.avatarInitials || msg.username.charAt(0).toUpperCase();
@@ -114,11 +128,22 @@ server.on('connection', (ws) => {
             else if (msg.type === 'update_profile') {
                 if (users[currentUserId]) {
                     let updated = false;
+                    
+                    // Проверяем уникальность нового username
                     if (msg.username && msg.username !== currentUsername) {
+                        if (isUsernameTaken(msg.username, currentUserId)) {
+                            ws.send(JSON.stringify({
+                                type: 'update_error',
+                                error: 'username_taken',
+                                message: 'Этот username уже занят'
+                            }));
+                            return;
+                        }
                         users[currentUserId].username = msg.username;
                         currentUsername = msg.username;
                         updated = true;
                     }
+                    
                     if (msg.avatar !== undefined && msg.avatar !== currentAvatar) {
                         users[currentUserId].avatar = msg.avatar;
                         currentAvatar = msg.avatar;
@@ -140,7 +165,6 @@ server.on('connection', (ws) => {
                         broadcastUsersList();
                         broadcastProfileUpdate(currentUserId);
                         
-                        // Подтверждаем обновление
                         ws.send(JSON.stringify({
                             type: 'profile_updated_confirm',
                             username: currentUsername,
@@ -201,12 +225,14 @@ server.on('connection', (ws) => {
                 
                 console.log(`💬 ${currentUsername} -> ${users[targetUserId]?.username}: ${msg.text}`);
                 
+                // Отправляем отправителю (только одно сообщение)
                 ws.send(JSON.stringify({
                     type: 'new_private_message',
                     message: newMsg,
                     chatId: chatId
                 }));
                 
+                // Отправляем получателю
                 const targetUser = users[targetUserId];
                 if (targetUser && targetUser.ws && targetUser.ws.readyState === WebSocket.OPEN) {
                     targetUser.ws.send(JSON.stringify({
@@ -238,4 +264,4 @@ server.on('connection', (ws) => {
 
 console.log('✅ Сервер запущен на порту ' + PORT);
 console.log('🌐 Адрес: wss://messenger-server-production-a67c.up.railway.app');
-console.log('💬 Личные чаты активны, профили обновляются в реальном времени');
+console.log('💬 Личные чаты активны, username уникальны');
